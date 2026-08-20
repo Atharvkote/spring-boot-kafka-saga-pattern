@@ -1,0 +1,63 @@
+# Target directory
+target/
+*.target
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Eclipse
+.settings/
+.classpath
+.project
+.metadata/
+
+# NetBeans
+nbproject/private/
+build/
+nbbuild/
+dist/
+nbdist/
+nbactions.xml
+
+# VS Code
+.vscode/
+
+# Local configuration files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+logs/
+*.log
+
+# OS temporary files
+Thumbs.db
+EHthumbs_db
+Desktop.ini
+.DS_Store
+
+# Maven Wrapper
+.mvn/
+mvnw
+mvnw.cmd
+
+# Compiled class file
+*.class
+
+# Package file-system
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Docker volume data
+docker/data/
+docker-compose.override.yml
