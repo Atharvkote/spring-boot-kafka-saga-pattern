@@ -38,52 +38,55 @@ The system is a **choreography-based saga** implementation for distributed order
 
 ## High-Level Architecture
 
-```
-                              ┌─────────────────┐
-                              │     Client       │
-                              └────────┬─────────┘
-                                       │
-                                       ▼
-                              ┌─────────────────┐
-                              │   API Gateway    │
-                              │   (port 8081)    │
-                              └────────┬─────────┘
-                                       │
-                         ┌─────────────┼─────────────┐
-                         │             │             │
-                         ▼             ▼             ▼
-                  ┌────────────┐ ┌──────────┐ ┌───────────┐
-                  │   Order    │ │ Inventory│ │  Payment  │
-                  │  Service   │ │  Service │ │  Service  │
-                  │ (8082)     │ │  (8083)  │ │  (8084)   │
-                  └──────┬─────┘ └────┬─────┘ └─────┬─────┘
-                         │            │             │
-                         ▼            ▼             ▼
-                  ┌────────────────────────────────────────┐
-                  │            Apache Kafka (KRaft)         │
-                  │            (port 9092 / 9094)           │
-                  └────────────────────┬───────────────────┘
-                                       │
-                                       ▼
-                              ┌─────────────────┐
-                              │  Notification   │
-                              │    Service      │
-                              │   (port 8085)   │
-                              └─────────────────┘
+```mermaid
+graph TB
+    Client(["Client"])
+    GW["API Gateway<br/>:8081"]
+    OS["Order Service<br/>:8082"]
+    IS["Inventory Service<br/>:8083"]
+    PS["Payment Service<br/>:8084"]
+    NS["Notification Service<br/>:8085"]
+    K{{"Apache Kafka - KRaft<br/>:9092 / :9094"}}
+    PG[("PostgreSQL<br/>:5433")]
+    CS["Config Server<br/>:8888"]
+    EU["Eureka<br/>:8761"]
+    KUI["Kafka UI<br/>:8088"]
 
-      ┌──────────────────────────────────────────────────────────┐
-      │                  Supporting Infrastructure                │
-      │                                                          │
-      │  ┌─────────────┐  ┌──────────────┐  ┌───────────────┐   │
-      │  │Config Server│  │   Eureka      │  │  PostgreSQL   │   │
-      │  │  (8888)     │  │   (8761)      │  │  (5433)       │   │
-      │  └─────────────┘  └──────────────┘  └───────────────┘   │
-      │                                                          │
-      │                    ┌──────────────┐                      │
-      │                    │   Kafka UI   │                      │
-      │                    │   (8088)     │                      │
-      │                    └──────────────┘                      │
-      └──────────────────────────────────────────────────────────┘
+    Client -->|REST| GW
+    GW -->|Routes| OS
+    GW -->|Routes| IS
+    GW -->|Routes| PS
+
+    OS <-->|Events| K
+    IS <-->|Events| K
+    PS <-->|Events| K
+    NS -.->|Consumes| K
+
+    OS -->|JDBC| PG
+    IS -->|JDBC| PG
+    PS -->|JDBC| PG
+
+    CS -.->|Config| OS
+    CS -.->|Config| IS
+    CS -.->|Config| PS
+    CS -.->|Config| NS
+    CS -.->|Config| GW
+
+    OS -.->|Register| EU
+    IS -.->|Register| EU
+    PS -.->|Register| EU
+    NS -.->|Register| EU
+    EU -.->|Discovery| GW
+
+    KUI -->|Monitor| K
+
+    style K fill:#e8453c,color:#fff,stroke:#c62828
+    style PG fill:#336791,color:#fff,stroke:#1b4f72
+    style GW fill:#4caf50,color:#fff,stroke:#2e7d32
+    style CS fill:#ff9800,color:#fff,stroke:#e65100
+    style EU fill:#9c27b0,color:#fff,stroke:#6a1b9a
+    style Client fill:#2196f3,color:#fff,stroke:#1565c0
+    style KUI fill:#607d8b,color:#fff,stroke:#37474f
 ```
 
 
@@ -146,38 +149,56 @@ Each service independently listens for events and reacts accordingly, publishing
 
 ### State Machine
 
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: Order Created
+
+    PENDING --> INVENTORY_RESERVED: Inventory Reserved
+    PENDING --> FAILED_NO_STOCK: Inventory Failed
+
+    INVENTORY_RESERVED --> COMPLETED: Payment Completed
+    INVENTORY_RESERVED --> COMPENSATING: Payment Failed
+
+    COMPENSATING --> FAILED: Inventory Released
+    FAILED_NO_STOCK --> FAILED: No Compensation Needed
+
+    COMPLETED --> [*]
+    FAILED --> [*]
+
+    note right of COMPENSATING
+        Inventory service releases
+        reserved stock automatically
+    end note
+
+    note right of FAILED_NO_STOCK
+        Nothing was reserved,
+        no rollback required
+    end note
 ```
-                    ORDER_CREATED
-                         │
-                         ▼
-              ┌─────────────────────┐
-              │   Inventory Check   │
-              └──────────┬──────────┘
-                    ┌────┴────┐
-                    │         │
-               Success     Failure
-                    │         │
-                    ▼         ▼
-          INVENTORY_RESERVED  INVENTORY_FAILED
-                    │              │
-                    ▼              ▼
-          ┌─────────────────┐   ORDER → FAILED
-          │ Payment Process │
-          └────────┬────────┘
-              ┌────┴────┐
-              │         │
-         Success     Failure
-              │         │
-              ▼         ▼
-    PAYMENT_COMPLETED  PAYMENT_FAILED
-              │              │
-              ▼              ▼
-    ORDER → COMPLETED  ┌────────────┐
-                       │ Compensate │
-                       │ Inventory  │
-                       └─────┬──────┘
-                             ▼
-                       ORDER → FAILED
+
+```mermaid
+flowchart TD
+    A(["ORDER_CREATED"]) --> B{"Inventory Check"}
+    B -->|Success| C(["INVENTORY_RESERVED"])
+    B -->|Failure| D(["INVENTORY_FAILED"])
+    C --> E{"Payment Process"}
+    D --> F["ORDER → FAILED"]
+    E -->|Success| G(["PAYMENT_COMPLETED"])
+    E -->|Failure| H(["PAYMENT_FAILED"])
+    G --> I["ORDER → COMPLETED"]
+    H --> J["Compensate Inventory"]
+    J --> K["Release Reserved Stock"]
+    K --> F
+
+    style A fill:#2196f3,color:#fff
+    style C fill:#4caf50,color:#fff
+    style G fill:#4caf50,color:#fff
+    style D fill:#f44336,color:#fff
+    style H fill:#f44336,color:#fff
+    style I fill:#4caf50,color:#fff,stroke:#2e7d32,stroke-width:3px
+    style F fill:#f44336,color:#fff,stroke:#c62828,stroke-width:3px
+    style J fill:#ff9800,color:#fff
+    style K fill:#ff9800,color:#fff
 ```
 
 ### Compensating Transactions
@@ -234,11 +255,25 @@ All events are serialized as JSON with the following common fields:
 
 Each business service owns a dedicated PostgreSQL database, ensuring loose coupling and independent schema evolution.
 
-```
-PostgreSQL Server (port 5433)
-├── order_db        ← Order Service
-├── inventory_db    ← Inventory Service
-└── payment_db      ← Payment Service
+```mermaid
+graph LR
+    PG[("PostgreSQL Server<br/>:5433")]
+    ODB[("order_db")]
+    IDB[("inventory_db")]
+    PDB[("payment_db")]
+
+    PG --- ODB
+    PG --- IDB
+    PG --- PDB
+
+    ODB ---|owned by| OS["Order Service"]
+    IDB ---|owned by| IS["Inventory Service"]
+    PDB ---|owned by| PS["Payment Service"]
+
+    style PG fill:#336791,color:#fff
+    style ODB fill:#42a5f5,color:#fff
+    style IDB fill:#66bb6a,color:#fff
+    style PDB fill:#ffa726,color:#fff
 ```
 
 ### Schema Management
@@ -306,25 +341,28 @@ CREATE DATABASE IF NOT EXISTS payment_db;
 - **Fire-and-forget**: Producers publish events without waiting for consumer acknowledgment
 - **Consumer Groups**: Each service uses a dedicated consumer group ID for independent offset tracking
 
-```
-┌──────────────┐     REST      ┌─────────────────┐
-│    Client     │ ────────────▶│   API Gateway    │
-└──────────────┘               └───────┬─────────┘
-                                       │ REST
-                                       ▼
-                              ┌─────────────────┐   Kafka Events
-                              │  Order Service   │ ◀──────────────┐
-                              └───────┬─────────┘                │
-                                      │ Kafka Events              │
-                                      ▼                          │
-                              ┌─────────────────┐   Kafka Events │
-                              │Inventory Service │ ──────────────▶│
-                              └───────┬─────────┘                │
-                                      │ Kafka Events              │
-                                      ▼                          │
-                              ┌─────────────────┐                │
-                              │ Payment Service  │ ───────────────┘
-                              └─────────────────┘
+```mermaid
+graph TD
+    subgraph sync ["Synchronous - REST"]
+        Client(["Client"]) -->|HTTP| GW["API Gateway"]
+        GW -->|HTTP| OS["Order Service"]
+        GW -->|HTTP| IS["Inventory Service"]
+        GW -->|HTTP| PS["Payment Service"]
+    end
+
+    subgraph async ["Asynchronous - Kafka Events"]
+        OS2["Order Service"] -->|ORDER_CREATED| K{{"Kafka"}}
+        K -->|ORDER_CREATED| IS2["Inventory Service"]
+        IS2 -->|INVENTORY_RESERVED| K
+        K -->|INVENTORY_RESERVED| PS2["Payment Service"]
+        PS2 -->|PAYMENT_COMPLETED| K
+        K -->|PAYMENT_COMPLETED / FAILED| OS3["Order Service"]
+        K -->|All terminal events| NS["Notification Service"]
+    end
+
+    style sync fill:#e3f2fd,stroke:#1565c0
+    style async fill:#fce4ec,stroke:#c62828
+    style K fill:#e8453c,color:#fff
 ```
 
 
@@ -348,14 +386,29 @@ All containers run on the `saga-network` bridge network, enabling inter-containe
 
 The Docker Compose dependency chain ensures correct startup ordering:
 
-```
-PostgreSQL ──┐
-             ├──▶ Config Server ──▶ Service Discovery ──▶ API Gateway
-Kafka ───────┘                           │
-                                         ├──▶ Order Service
-                                         ├──▶ Inventory Service
-                                         ├──▶ Payment Service
-                                         └──▶ Notification Service
+```mermaid
+graph LR
+    PG[("PostgreSQL")] --> CS["Config Server"]
+    KF{{"Kafka"}} --> CS
+    CS --> SD["Service Discovery"]
+    SD --> GW["API Gateway"]
+    SD --> OS["Order Service"]
+    SD --> IS["Inventory Service"]
+    SD --> PS["Payment Service"]
+    SD --> NS["Notification Service"]
+    PG --> OS
+    PG --> IS
+    PG --> PS
+    KF --> OS
+    KF --> IS
+    KF --> PS
+    KF --> NS
+
+    style PG fill:#336791,color:#fff
+    style KF fill:#e8453c,color:#fff
+    style CS fill:#ff9800,color:#fff
+    style SD fill:#9c27b0,color:#fff
+    style GW fill:#4caf50,color:#fff
 ```
 
 ### Container Images

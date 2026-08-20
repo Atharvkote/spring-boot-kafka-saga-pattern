@@ -61,11 +61,20 @@ curl http://localhost:8081/actuator/health
 
 Infrastructure services must be started in the following order due to dependency chains:
 
+```mermaid
+graph LR
+    CS["Config Server<br/>:8888"] --> SD["Service Discovery<br/>:8761"]
+    SD --> GW["API Gateway<br/>:8081"]
+
+    CS -.->|serves config to| SD
+    SD -.->|registers| GW
+
+    style CS fill:#ff9800,color:#fff
+    style SD fill:#9c27b0,color:#fff
+    style GW fill:#4caf50,color:#fff
 ```
-1. Config Server     (no dependencies)
-2. Service Discovery (depends on Config Server)
-3. API Gateway       (depends on Service Discovery)
-```
+
+> **Config Server** has no dependencies and must start first. **Service Discovery** fetches its config from Config Server. **API Gateway** registers with Service Discovery for dynamic routing.
 
 ## Building
 

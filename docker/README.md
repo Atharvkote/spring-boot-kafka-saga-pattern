@@ -76,16 +76,57 @@ docker compose -f docker/deps.compose.yml down
 | `payment-service`      | `8084` | PostgreSQL, Kafka, Service Discovery     |
 | `notification-service` | `8085` | Kafka, Service Discovery                 |
 
+### Startup Dependency Graph
+
+```mermaid
+graph LR
+    PG[("PostgreSQL")] --> CS["Config Server"]
+    KF{{"Kafka"}} --> CS
+    CS --> SD["Service Discovery"]
+    SD --> GW["API Gateway"]
+    PG & KF & SD --> OS["Order Service"]
+    PG & KF & SD --> IS["Inventory Service"]
+    PG & KF & SD --> PS["Payment Service"]
+    KF & SD --> NS["Notification Service"]
+    KF --> KUI["Kafka UI"]
+
+    style PG fill:#336791,color:#fff
+    style KF fill:#e8453c,color:#fff
+    style CS fill:#ff9800,color:#fff
+    style SD fill:#9c27b0,color:#fff
+    style GW fill:#4caf50,color:#fff
+    style KUI fill:#607d8b,color:#fff
+```
+
 
 ## Networking
 
 All containers communicate over a shared Docker bridge network:
 
-```yaml
-networks:
-  saga-network:
-    name: saga-network
-    driver: bridge
+```mermaid
+graph TB
+    subgraph net ["saga-network (bridge)"]
+        PG[("PostgreSQL<br/>internal: 5432<br/>external: 5433")]
+        K{{"Kafka<br/>internal: 9092<br/>external: 9094"}}
+        KUI["Kafka UI<br/>:8088"]
+        CS["Config Server<br/>:8888"]
+        SD["Service Discovery<br/>:8761"]
+        GW["API Gateway<br/>:8081"]
+        OS["Order Service<br/>:8082"]
+        IS["Inventory Service<br/>:8083"]
+        PS["Payment Service<br/>:8084"]
+        NS["Notification Service<br/>:8085"]
+    end
+
+    Host(["Host Machine"]) -.->|localhost:5433| PG
+    Host -.->|localhost:9094| K
+    Host -.->|localhost:8088| KUI
+    Host -.->|localhost:8081| GW
+
+    style net fill:#e8eaf6,stroke:#3949ab
+    style Host fill:#2196f3,color:#fff
+    style PG fill:#336791,color:#fff
+    style K fill:#e8453c,color:#fff
 ```
 
 - **Internal Kafka listener**: `kafka:9092` (container-to-container)
