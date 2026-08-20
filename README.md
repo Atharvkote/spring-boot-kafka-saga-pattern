@@ -1,5 +1,7 @@
 # Spring Boot Kafka Saga Pattern
 
+<img width="1536" height="1024" alt="ChatGPT Image Aug 21, 2026, 12_09_49 AM" src="https://github.com/user-attachments/assets/2ea73f07-4b53-4dbb-9dbe-b7b568dd5b41" />
+
 An **event-driven microservices** order management system implementing the **Saga Orchestration Pattern** using Apache Kafka and Spring Boot. This project demonstrates distributed transaction management across four business services with automatic compensating transactions on failure.
 
 ## Table of Contents
