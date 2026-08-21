@@ -24,9 +24,6 @@ jobs:
           - { name: inventory-service,     path: services/inventory-service }
           - { name: payment-service,       path: services/payment-service }
           - { name: notification-service,  path: services/notification-service }
-          - { name: config-server,         path: infrastructure/config-server }
-          - { name: service-discovery,     path: infrastructure/service-discovery }
-          - { name: api-gateway,           path: infrastructure/api-gateway }
 
     permissions:
       contents: read
