@@ -4,17 +4,40 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  REGISTRY: docker.io
+  IMAGE_PREFIX: ${{ secrets.DOCKERHUB_USERNAME }}/saga
 
 jobs:
-  docker:
+  build:
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - { name: order-service,        path: services/order-service }
+          - { name: inventory-service,     path: services/inventory-service }
+          - { name: payment-service,       path: services/payment-service }
+          - { name: notification-service,  path: services/notification-service }
+          - { name: config-server,         path: infrastructure/config-server }
+          - { name: service-discovery,     path: infrastructure/service-discovery }
+          - { name: api-gateway,           path: infrastructure/api-gateway }
+
+    permissions:
+      contents: read
+      security-events: write
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
@@ -23,31 +46,54 @@ jobs:
       - name: Make Maven Wrapper executable
         run: chmod +x ./mvnw
 
-      - name: Build Application
-        run: ./mvnw clean package -DskipTests
+      - name: Build ${{ matrix.service.name }}
+        run: ./mvnw -pl ${{ matrix.service.path }} -am clean package -DskipTests
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}-${{ matrix.service.name }}
+          tags: |
+            type=sha,prefix=
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service.path }}
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service.name }}
+          cache-to: type=gha,scope=${{ matrix.service.name }},mode=max
+
+      # ── Security Scan ──────────────────────────────────────────
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_PREFIX }}-${{ matrix.service.name }}:latest
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      # ── Push (only on main branch push, not PRs) ───────────────
       - name: Login to Docker Hub
-        uses: docker/login-action@v4
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build Docker Image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: false
-          load: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/caching-app:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/caching-app:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
       - name: Push Docker Image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/caching-app:latest
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/caching-app:${{ github.sha }}
+          for tag in $(echo "${{ steps.meta.outputs.tags }}" | tr '\n' ' '); do
+            docker push "$tag"
+          done
