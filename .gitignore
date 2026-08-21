@@ -45,8 +45,6 @@ Desktop.ini
 
 # Maven Wrapper
 .mvn/
-mvnw
-mvnw.cmd
 
 # Compiled class file
 *.class
